@@ -107,6 +107,15 @@ static void handle_req_item(const nv_handle_item_t *item, const uint8_t *payload
         is_float = true;
         break;
 
+    case SNVT_raw16:
+        result = raw16;
+        break;
+
+    case SNVT_mass_10kilo:
+        result = raw16 * 10.0f;
+        is_float = true;
+        break;
+
     default:
         return;
     }
@@ -165,6 +174,12 @@ static void register_req_item(const nv_handle_item_t *item)
         entity.unit_of_meas = "h";
         break;
     case SNVT_count:
+    case SNVT_raw16:
+        break;
+    case SNVT_mass_10kilo:
+        entity.dev_class = "weight";
+        entity.unit_of_meas = "kg";
+        is_float = true;
         break;
 
     default:
@@ -192,9 +207,18 @@ static void register_req_item(const nv_handle_item_t *item)
     }
 }
 
+/*
+ * Datenpunkte (leramleram): Topic-Namen und Werte wie im bisher aufgespielten Stand, damit die
+ * Home-Assistant-Sensoren unverändert weiterlaufen. Zuordnung per Analyse der aufgespielten Firmware
+ * (siehe Commit "Rekonstruktion des aufgespielten Stands"). Abweichend von Upstream:
+ *  - 60/0x1B = Betriebsstunden, 60/0x1C = Anheizzähler, 60/0x1D = Brennkammer, 60/0x28 = Abgas
+ *  - 60/0x13 Gesamtverbrauch (x10 kg), 60/0x17/0x18 Leistung aktuell/Durchschnitt
+ *  - UML C1 (10) 0x22/0x23 = Vorlauf soll/ist (Topics wie bisher "...-hk")
+ *  - die Upstream-Belegung von 0x2A/0x2B/0x2F/0x31 wird unter neutralen Namen weiter abgefragt
+ */
 static const nv_sel_item_t nv_sel_items[] = {
     {0x000, {SNVT_temp_p, NULL, "temp-aussen", "Temperatur Aussen"}},
-    {0x010, {SNVT_temp_p, NULL, "temp-vorlauf-soll-hk", "Temperatur Vorlauf Heizkörper soll"}},
+    {0x010, {SNVT_temp_p, NULL, "temp-vorlauf-soll-sel10", "Temperatur Vorlauf soll (Selektor 0x010)"}},
     {0x012, {SNVT_temp_p, NULL, "temp-vorlauf-soll-ww", "Temperatur Vorlauf Warmwasser soll"}},
     {0x072, {SNVT_temp_p, NULL, "temp-soll-ww", "Temperatur Warmwasser soll"}},
     {0x01B, {SNVT_temp_p, NULL, "temp-speicher", "Temperatur Speicher"}},
@@ -202,25 +226,33 @@ static const nv_sel_item_t nv_sel_items[] = {
     {0x110, {SNVT_temp_p, NULL, "temp-kessel", "Temperatur Kessel"}}};
 
 static const nv_req_item_t nv_req_items[] = {
-    {60, 0x07, {SNVT_count, NULL, "fehlercode", "Fehlercode"}},
+    {60, 0x07, {SNVT_count, NULL, "fehlercode-pmx", "Fehlercode PMX"}},
     {60, 0x10, {SNVT_DISP, &lon_stat.pmx_state, "zustand", "Zustand"}},
     {60, 0x12, {SNVT_rpm, NULL, "drehzahl", "Drehzahl"}},
-    {60, 0x15, {SNVT_mass_kilo, &lon_stat.foerder_soll, "foerder-soll", "Fördermenge/h soll"}},
-    {60, 0x1B, {SNVT_mass_kilo, NULL, "foerder-berech", "Fördermenge/h berechnet"}},
+    {60, 0x13, {SNVT_mass_10kilo, NULL, "gesamtverbrauch", "Gesamtverbrauch"}},
+    {60, 0x15, {SNVT_raw16, &lon_stat.foerder_soll, "foerder-soll", "Fördermenge/h soll (0,1 kg)"}},
+    {60, 0x17, {SNVT_lev_cont, NULL, "leistungaktuell", "Leistung aktuell"}},
+    {60, 0x18, {SNVT_lev_cont, NULL, "leistungdurchschnitt", "Leistung Durchschnitt"}},
+    {60, 0x1B, {SNVT_time_hour, NULL, "betriebsstunden", "Betriebsstunden"}},
+    {60, 0x1C, {SNVT_count, NULL, "anheiz-count", "Anheizzähler"}},
+    {60, 0x1D, {SNVT_temp, NULL, "temp-brennkammer", "Temperatur Brennkammer"}},
     {60, 0x23, {SNVT_lev_cont, NULL, "leistung-soll", "Leistung soll"}},
     {60, 0x25, {SNVT_lev_cont, NULL, "leistung", "Leistung ist"}},
-    {60, 0x2A, {SNVT_time_hour, NULL, "betriebsstunden", "Betriebsstunden"}},
-    {60, 0x2B, {SNVT_count, NULL, "anheiz-count", "Anheizzähler"}},
-    {60, 0x2F, {SNVT_temp, NULL, "temp-kammer", "Temperatur Brennkammer"}},
-    {60, 0x31, {SNVT_temp, NULL, "temp-abgas", "Temperatur Abgas"}},
+    {60, 0x28, {SNVT_temp, NULL, "temp-abgas", "Temperatur Abgas"}},
+    {60, 0x2A, {SNVT_raw16, NULL, "pmx-2a", "PMX 0x2A (Upstream: Betriebsstunden)"}},
+    {60, 0x2B, {SNVT_raw16, NULL, "pmx-2b", "PMX 0x2B (Upstream: Anheizzähler)"}},
+    {60, 0x2F, {SNVT_temp, NULL, "pmx-2f", "PMX 0x2F (Upstream: Temperatur Brennkammer)"}},
     {60, 0x30, {SNVT_temp_p, NULL, "temp-schaltfeld", "Temperatur Schaltfeld"}},
+    {60, 0x31, {SNVT_temp, NULL, "pmx-31", "PMX 0x31 (Upstream: Temperatur Abgas)"}},
     {60, 0x32, {SNVT_temp_p, NULL, "temp-kessel-soll", "Temperatur Kessel soll"}},
 
     /* UML 0x10 */
-    {10, 0x1B, {SNVT_temp_p, NULL, "temp-speicher", "Temperatur Speicher"}},
+    {10, 0x1B, {SNVT_temp_p, NULL, "temp-speicher-uml", "Temperatur Speicher (UML)"}},
     {10, 0x1C, {SNVT_temp_p, NULL, "temp-speicher-soll", "Temperatur Speicher soll"}},
     {10, 0x1D, {SNVT_lev_cont, NULL, "ww-pumpe", "Warmwasser Pumpe"}},
     {10, 0x1E, {SNVT_lev_cont, NULL, "ww-ladeventil", "Warmwasser Ladeventil"}},
+    {10, 0x22, {SNVT_temp_p, NULL, "temp-vorlauf-soll-hk", "Temperatur Vorlauf soll (UML 10)"}},
+    {10, 0x23, {SNVT_temp_p, NULL, "temp-vorlauf-ist-hk", "Temperatur Vorlauf ist (UML 10)"}},
     {10, 0x24, {SNVT_lev_cont, NULL, "fbh-pumpe", "FBH Pumpe"}},
     {10, 0x25, {SNVT_lev_percent, NULL, "fbh-mischer", "FBH Mischer"}},
 

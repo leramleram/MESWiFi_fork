@@ -459,7 +459,8 @@ bool mqtt_loop()
                where
                   timestep = miliseconds since last read
             */
-            foerder_integral += (lon_stat.foerder_soll * 4.8f * expired_ms) / (60.0f * 60.0f * 1000.0f);
+            /* foerder_soll kommt als Rohwert (0,1 kg/h), siehe nv_req_items */
+            foerder_integral += (lon_stat.foerder_soll / 10.0f * 4.8f * expired_ms) / (60.0f * 60.0f * 1000.0f);
             mqtt_publish_float("feeds/float/%s/foerder-integral-kWh", foerder_integral);
 
             mqtt_last_publish_time = time;

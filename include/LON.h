@@ -43,7 +43,10 @@ typedef enum
     /* https://www.lonmark.org/nvs/?id=SNVT_count */
     SNVT_count,
     /* https://www.lonmark.org/nvs/?id=SNVT_lev_percent */
-    SNVT_lev_percent
+    SNVT_lev_percent,
+    /* eigene Typen (leramleram): Rohwert 16 bit ohne Umrechnung, Gesamtverbrauch in 10 kg */
+    SNVT_raw16,
+    SNVT_mass_10kilo
 } snvt_type_t;
 
 typedef struct
