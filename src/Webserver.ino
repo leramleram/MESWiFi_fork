@@ -1,6 +1,7 @@
 #include <WebServer.h>
 #include <ESP32httpUpdate.h>
-#include "Config.h"
+#include <Config.h>
+#include <Macros.h>
 
 #define xstr(s) str(s)
 #define str(s) #s
@@ -11,10 +12,7 @@ extern bool wifi_captive;
 extern volatile lonStat_t lon_stat;
 
 int www_wifi_scanned = -1;
-int www_last_captive = 0;
-
-#define min(a, b) ({ __typeof__ (a) _a = (a); __typeof__ (b) _b = (b); _a < _b ? _a : _b; })
-#define max(a, b) ({ __typeof__ (a) _a = (a); __typeof__ (b) _b = (b); _a > _b ? _a : _b; })
+uint32_t www_last_captive = 0;
 
 void www_setup()
 {
@@ -280,7 +278,7 @@ void handle_set_parm()
     strncpy(current_config.wifi_password, webserver.arg("wifi_password").c_str(), sizeof(current_config.wifi_password));
 
     strncpy(current_config.mqtt_server, webserver.arg("mqtt_server").c_str(), sizeof(current_config.mqtt_server));
-    current_config.mqtt_port = max(1, min(65535, webserver.arg("mqtt_port").toInt()));
+    current_config.mqtt_port = COERCE(webserver.arg("mqtt_port").toInt(), 1, 65535);
     strncpy(current_config.mqtt_user, webserver.arg("mqtt_user").c_str(), sizeof(current_config.mqtt_user));
     strncpy(current_config.mqtt_password, webserver.arg("mqtt_password").c_str(), sizeof(current_config.mqtt_password));
     strncpy(current_config.mqtt_client, webserver.arg("mqtt_client").c_str(), sizeof(current_config.mqtt_client));
@@ -324,7 +322,7 @@ String SendHTML()
     String ptr = "<!DOCTYPE html> <html>\n";
     ptr += "<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
 
-    sprintf(buf, "<title>MES-WiFi Control</title>\n");
+    sprintf(buf, "<title>" CONFIG_OTANAME " Control</title>\n");
 
     ptr += buf;
     ptr += "<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
@@ -357,7 +355,7 @@ String SendHTML()
     ptr += "</head>\n";
     ptr += "<body>\n";
 
-    sprintf(buf, "<h1>MES-WiFi</h1>\n");
+    sprintf(buf, "<h1>" CONFIG_OTANAME "</h1>\n");
     ptr += buf;
 
     sprintf(buf, "<h3>v1." xstr(PIO_SRC_REVNUM) " - " xstr(PIO_SRC_REV) "</h3>\n");
@@ -461,9 +459,9 @@ String SendHTML()
     ADD_CONFIG("mqtt_user", current_config.mqtt_user, "%s", "MQTT Username");
     ADD_CONFIG("mqtt_password", current_config.mqtt_password, "%s", "MQTT Password");
     ADD_CONFIG("mqtt_client", current_config.mqtt_client, "%s", "MQTT Client Identification");
-    ADD_CONFIG_CHECK4("verbose", current_config.verbose, "%d", "Verbosity", "Serial", "-", "-", "-");
+    ADD_CONFIG_CHECK4("verbose", current_config.verbose, "%d", "Verbosity", "Serial", "-", "Home Assistant", "-");
     ADD_CONFIG_CHECK4("mqtt_publish", current_config.mqtt_publish, "%d", "MQTT publishes", "-", "Debug", "-", "-");
-    ADD_CONFIG("http_update", "", "%s", "Update URL");
+    ADD_CONFIG("http_update", "", "%s", "Update URL (<a href=\"javascript:void(0);\" onclick=\"document.getElementById('http_update').value = 'https://g3gg0.magiclantern.fm/Firmware/MES-WiFi/firmware.bin'\">Release</a>)");
 
     ptr += "<td></td><td><input type=\"submit\" value=\"Save\"><button type=\"submit\" name=\"reboot\" value=\"true\">Save &amp; Reboot</button></td></table></form>\n";
 

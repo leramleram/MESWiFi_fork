@@ -1,9 +1,10 @@
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <LON.h>
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) < (b) ? (b) : (a))
+#include <HA.h>
+#include <Macros.h>
 
 const char *udpAddress = "192.168.1.255";
 const int udpPort = 3333;
@@ -12,82 +13,23 @@ const int udpPortIn = 3334;
 WiFiUDP lon_udp_out;
 WiFiUDP lon_udp_in;
 
-#define LON_RX 35
-#define LON_TX 25
-#define LON_TX_EN 26
-
-#define LONSTATE_VERSION 0x0100
-
 extern float tempsens_value;
 
 volatile uint32_t lon_rx_activity = 0;
+bool lon_udp_begun = false;
 
 struct tm timeStruct;
 
-typedef struct
-{
-    uint64_t magic1;
-    uint32_t version;
-
-    /* must not be used from stored state */
-    uint32_t stat_start_valid;
-    struct tm stat_start;
-
-    /* restored from SPIFFS */
-    uint32_t error;
-    uint32_t rx_count;
-    uint32_t crc_errors;
-    uint32_t last_error_minutes;
-    uint32_t burning_minutes;
-    uint32_t avg_len_0;
-    uint32_t avg_len_1;
-    uint32_t min_len_0;
-    uint32_t min_len_1;
-    uint32_t max_len_0;
-    uint32_t max_len_1;
-    uint32_t igniteStatPos;
-    uint8_t igniteStats[24 * 12];
-    uint32_t ignites_24h;
-    int32_t var_sel_00;        /* 0x188 Selektor 0x000 Aussentemperatur */
-    uint32_t var_sel_10;       /* 0x18c Selektor 0x010 (Vorlauf soll HK, nicht mehr gesendet) */
-    uint32_t var_sel_12;       /* 0x190 Selektor 0x012 Vorlauf soll WW */
-    uint32_t var_unused_194;   /* 0x194 im aufgespielten Stand ungenutzt */
-    uint32_t var_sel_72;       /* 0x198 Selektor 0x072 Warmwasser soll */
-    uint32_t var_sel_8A;       /* 0x19c Selektor 0x08A */
-    uint32_t var_sel_110;      /* 0x1a0 Selektor 0x110 Kesseltemperatur */
-    uint32_t var_drehzahl;     /* 0x1a4 wird gesendet, aber nie beschrieben (Fehler im aufgespielten Stand) */
-    uint32_t var_nv_12;        /* 0x1a8 PMX 0x12 Drehzahl */
-    uint32_t var_nv_13;        /* 0x1ac PMX 0x13 Gesamtverbrauch /10 */
-    uint32_t var_nv_15_pmx;    /* 0x1b0 PMX 0x15 Foerdermenge soll */
-    uint32_t var_nv_17;        /* 0x1b4 PMX 0x17 Leistung aktuell (0,5 %) */
-    uint32_t var_nv_18;        /* 0x1b8 PMX 0x18 Leistung Durchschnitt (0,5 %) */
-    uint32_t var_nv_1B;        /* 0x1bc UML C1 0x1B */
-    uint32_t var_nv_1B_pmx;    /* 0x1c0 PMX 0x1B (als Betriebsstunden gesendet) */
-    uint32_t var_nv_1C;        /* 0x1c4 PMX 0x1C Anheizvorgaenge */
-    uint32_t var_nv_1D;        /* 0x1c8 PMX 0x1D Brennkammertemperatur (0,1 K) */
-    uint32_t var_nv_22_uml;    /* 0x1cc UML C1 0x22 Vorlauf soll HK */
-    uint32_t var_nv_23_uml;    /* 0x1d0 UML C1 0x23 Vorlauf ist HK */
-    uint32_t var_nv_23_pmx;    /* 0x1d4 PMX 0x23 Leistung soll */
-    uint32_t var_nv_25_pmx;    /* 0x1d8 PMX 0x25 Leistung */
-    uint32_t var_nv_28;        /* 0x1dc PMX 0x28 Abgastemperatur (0,1 K) */
-    uint32_t var_nv_2A;        /* 0x1e0 */
-    uint32_t var_nv_2B;        /* 0x1e4 */
-    uint32_t var_nv_2B_last;   /* 0x1e8 */
-    uint32_t var_nv_2F;        /* 0x1ec */
-    uint32_t var_nv_31;        /* 0x1f0 */
-    uint32_t var_nv_32;        /* 0x1f4 */
-    char var_nv_10[8];
-    uint32_t var_nv_10_state;
-
-    /* footer */
-    uint64_t magic2;
-} lonStat_t;
+uint32_t manual_set_temperature = 80;
+bool manual_set_active = false;
+uint32_t manual_set_next = 0;
+uint32_t manual_set_end = 0;
+uint32_t manual_set_duration = 1800;
 
 volatile lonStat_t lon_stat;
 
 extern bool time_valid;
 extern volatile bool lon_rx_running;
-#define LON_BUFFER_LEN 512
 uint8_t lon_buffer[LON_BUFFER_LEN];
 uint32_t lon_buffer_pos = 0;
 uint32_t lon_bit_duration = 0;
@@ -95,17 +37,196 @@ uint32_t lon_last_error = 0;
 
 bool lon_save = false;
 
-typedef struct
-{
-    uint8_t filled;
-    uint8_t errorCode;
-    uint32_t bitCount;
-    uint32_t bitDuration;
-    uint8_t payload[LON_BUFFER_LEN];
-} lonPacket_t;
-
-#define LON_PACKET_COUNT 8
 volatile lonPacket_t lon_rx_packets[LON_PACKET_COUNT];
+
+static void handle_req_item(const nv_handle_item_t *item, const uint8_t *payload, uint8_t length)
+{
+    char mqtt_topic[64];
+    char message[16];
+    float result = 0;
+    bool is_float = false;
+
+    /* we know the buffer is bigger, as there is a checksum, so this will work - but not clean */
+    uint16_t raw16 = ((uint16_t)payload[0] << 8) | payload[1];
+    uint16_t raw8 = payload[0];
+
+    switch (item->type)
+    {
+    case SNVT_DISP:
+        sprintf(message, "%c%c %d", payload[0], payload[1], payload[3]);
+        mqtt_publish_string("feeds/string/%s/display", message);
+        result = raw8 - 0x30;
+        break;
+
+    case SNVT_count:
+        if (raw16 == 0xFFFF)
+        {
+            raw16 = 0;
+        }
+        result = raw16;
+        break;
+        
+    case SNVT_rpm:
+    case SNVT_time_hour:
+        result = raw16;
+        break;
+
+    case SNVT_mass_kilo:
+        result = raw16 / 10.0f;
+        break;
+
+    case SNVT_temp:
+    {
+        if (raw16 == 0x7FFF)
+        {
+            return;
+        }
+        result = (raw16 / 10.0f) - 273.15f;
+        is_float = true;
+        break;
+    }
+
+    case SNVT_temp_p:
+    {
+        if (raw16 >= 0x7FFF)
+        {
+            return;
+        }
+        result = (int16_t)raw16 / 100.0f;
+        is_float = true;
+        break;
+    }
+
+    case SNVT_lev_percent:
+        result = (int16_t)raw16 / 200.0f;
+        is_float = true;
+        break;
+
+    case SNVT_lev_cont:
+        result = raw8 / 2.0f;
+        is_float = true;
+        break;
+
+    default:
+        return;
+    }
+
+    if (item->destination)
+    {
+        *item->destination = result;
+    }
+
+    if (is_float)
+    {
+        strcpy(mqtt_topic, "feeds/float/%s/");
+        strcat(mqtt_topic, item->name);
+        mqtt_publish_float(mqtt_topic, result);
+    }
+    else
+    {
+        strcpy(mqtt_topic, "feeds/integer/%s/");
+        strcat(mqtt_topic, item->name);
+        mqtt_publish_int(mqtt_topic, (int)result);
+    }
+}
+
+static void register_req_item(const nv_handle_item_t *item)
+{
+    char mqtt_topic[64];
+    bool is_float = false;
+
+    t_ha_entity entity;
+
+    memset(&entity, 0x00, sizeof(entity));
+
+    switch (item->type)
+    {
+    case SNVT_DISP:
+        break;
+    case SNVT_temp_p:
+    case SNVT_temp:
+        entity.dev_class = "temperature";
+        entity.unit_of_meas = "°C";
+        is_float = true;
+        break;
+    case SNVT_rpm:
+        entity.unit_of_meas = "rpm";
+        break;
+    case SNVT_mass_kilo:
+        entity.dev_class = "weight";
+        entity.unit_of_meas = "kg";
+        break;
+    case SNVT_lev_percent:
+    case SNVT_lev_cont:
+        entity.unit_of_meas = "%";
+        is_float = true;
+        break;
+    case SNVT_time_hour:
+        entity.unit_of_meas = "h";
+        break;
+    case SNVT_count:
+        break;
+
+    default:
+        return;
+    }
+
+    entity.id = item->name;
+    entity.name = item->description;
+    entity.type = ha_sensor;
+
+    if (is_float)
+    {
+        strcpy(mqtt_topic, "feeds/float/%s/");
+        strcat(mqtt_topic, item->name);
+    }
+    else
+    {
+        strcpy(mqtt_topic, "feeds/integer/%s/");
+        strcat(mqtt_topic, item->name);
+    }
+    entity.stat_t = strdup(mqtt_topic);
+    if (!ha_add(&entity))
+    {
+        free((void *)entity.stat_t);
+    }
+}
+
+static const nv_sel_item_t nv_sel_items[] = {
+    {0x000, {SNVT_temp_p, NULL, "temp-aussen", "Temperatur Aussen"}},
+    {0x010, {SNVT_temp_p, NULL, "temp-vorlauf-soll-hk", "Temperatur Vorlauf Heizkörper soll"}},
+    {0x012, {SNVT_temp_p, NULL, "temp-vorlauf-soll-ww", "Temperatur Vorlauf Warmwasser soll"}},
+    {0x072, {SNVT_temp_p, NULL, "temp-soll-ww", "Temperatur Warmwasser soll"}},
+    {0x01B, {SNVT_temp_p, NULL, "temp-speicher", "Temperatur Speicher"}},
+    {0x101, {SNVT_count, NULL, "fehlercode", "Fehlercode"}},
+    {0x110, {SNVT_temp_p, NULL, "temp-kessel", "Temperatur Kessel"}}};
+
+static const nv_req_item_t nv_req_items[] = {
+    {60, 0x07, {SNVT_count, NULL, "fehlercode", "Fehlercode"}},
+    {60, 0x10, {SNVT_DISP, &lon_stat.pmx_state, "zustand", "Zustand"}},
+    {60, 0x12, {SNVT_rpm, NULL, "drehzahl", "Drehzahl"}},
+    {60, 0x15, {SNVT_mass_kilo, &lon_stat.foerder_soll, "foerder-soll", "Fördermenge/h soll"}},
+    {60, 0x1B, {SNVT_mass_kilo, NULL, "foerder-berech", "Fördermenge/h berechnet"}},
+    {60, 0x23, {SNVT_lev_cont, NULL, "leistung-soll", "Leistung soll"}},
+    {60, 0x25, {SNVT_lev_cont, NULL, "leistung", "Leistung ist"}},
+    {60, 0x2A, {SNVT_time_hour, NULL, "betriebsstunden", "Betriebsstunden"}},
+    {60, 0x2B, {SNVT_count, NULL, "anheiz-count", "Anheizzähler"}},
+    {60, 0x2F, {SNVT_temp, NULL, "temp-kammer", "Temperatur Brennkammer"}},
+    {60, 0x31, {SNVT_temp, NULL, "temp-abgas", "Temperatur Abgas"}},
+    {60, 0x30, {SNVT_temp_p, NULL, "temp-schaltfeld", "Temperatur Schaltfeld"}},
+    {60, 0x32, {SNVT_temp_p, NULL, "temp-kessel-soll", "Temperatur Kessel soll"}},
+
+    /* UML 0x10 */
+    {10, 0x1B, {SNVT_temp_p, NULL, "temp-speicher", "Temperatur Speicher"}},
+    {10, 0x1C, {SNVT_temp_p, NULL, "temp-speicher-soll", "Temperatur Speicher soll"}},
+    {10, 0x1D, {SNVT_lev_cont, NULL, "ww-pumpe", "Warmwasser Pumpe"}},
+    {10, 0x1E, {SNVT_lev_cont, NULL, "ww-ladeventil", "Warmwasser Ladeventil"}},
+    {10, 0x24, {SNVT_lev_cont, NULL, "fbh-pumpe", "FBH Pumpe"}},
+    {10, 0x25, {SNVT_lev_percent, NULL, "fbh-mischer", "FBH Mischer"}},
+
+    /* UML 0x11 */
+    {11, 0x24, {SNVT_lev_cont, NULL, "hk-pumpe", "Heizkörper Pumpe"}},
+    {11, 0x25, {SNVT_lev_percent, NULL, "hk-mischer", "Heizkörper Mischer"}}};
 
 uint16_t crc16_table[] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5,
@@ -249,177 +370,13 @@ void lon_parse(const uint8_t *payload, uint8_t length)
                     uint8_t nvIndex = payload[pos];
                     pos++;
 
-                    switch (nvIndex)
+                    for (int idx = 0; idx < COUNT(nv_req_items); idx++)
                     {
-                    /* PMX (60) NV ID 0x10 is "Display" */
-                    case 0x10:
-                    {
-                        if (npdu_src == 60)
+                        if (nv_req_items[idx].dest == npdu_src &&
+                            nv_req_items[idx].nvar == nvIndex)
                         {
-                            sprintf((char *)lon_stat.var_nv_10, "%c%c %d", payload[pos], payload[pos + 1], payload[pos + 3]);
-                            lon_stat.var_nv_10_state = payload[pos] - 0x30;
+                            handle_req_item(&nv_req_items[idx].handle, &payload[pos], length - pos);
                         }
-                        break;
-                    }
-
-                    /* PMX (60) NV ID 0x12 is "Drehzahl ist" */
-                    case 0x12:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_12 = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x13 "Gesamtverbrauch" (x10) */
-                    case 0x13:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_13 = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x15 is "Fördermenge Soll" */
-                    case 0x15:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_15_pmx = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x17 "Leistung aktuell" (0,5 %) */
-                    case 0x17:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_17 = payload[pos];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x18 "Leistung Durchschnitt" (0,5 %) */
-                    case 0x18:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_18 = payload[pos];
-                        }
-                        break;
-                    }
-                    /* UML C1 (10) NV ID 0x1B / PMX (60) NV ID 0x1B (als Betriebsstunden gesendet) */
-                    case 0x1B:
-                    {
-                        if (npdu_src == 10)
-                        {
-                            lon_stat.var_nv_1B = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_1B_pmx = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x1C "Anheizvorgänge" */
-                    case 0x1C:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_1C = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x1D "Brennkammertemperatur" (0,1 K) */
-                    case 0x1D:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_1D = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* UML C1 (10) NV ID 0x22 "Vorlauf soll HK" */
-                    case 0x22:
-                    {
-                        if (npdu_src == 10)
-                        {
-                            lon_stat.var_nv_22_uml = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* UML C1 (10) NV ID 0x23 "Vorlauf ist HK" / PMX (60) NV ID 0x23 "Leistung Soll" */
-                    case 0x23:
-                    {
-                        if (npdu_src == 10)
-                        {
-                            lon_stat.var_nv_23_uml = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_23_pmx = payload[pos];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x25 is "Leistung" */
-                    case 0x25:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_25_pmx = payload[pos];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x28 "Abgastemperatur" (0,1 K) */
-                    case 0x28:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_28 = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x2B is "Anheizvorgänge" */
-                    case 0x2B:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_2B = (payload[pos] << 8) | payload[pos + 1];
-
-                            if (lon_stat.var_nv_2B == (lon_stat.var_nv_2B_last + 1))
-                            {
-                                lon_stat.igniteStats[lon_stat.igniteStatPos]++;
-                            }
-                            lon_stat.var_nv_2B_last = lon_stat.var_nv_2B;
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x2F is probably "Brennraumtemperatur" */
-                    case 0x2F:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_2F = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x31 is probably "Abgastemperatur" */
-                    case 0x31:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_31 = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
-                    /* PMX (60) NV ID 0x32 is probably "T_Kessel_Soll" */
-                    case 0x32:
-                    {
-                        if (npdu_src == 60)
-                        {
-                            lon_stat.var_nv_32 = (payload[pos] << 8) | payload[pos + 1];
-                        }
-                        break;
-                    }
                     }
                 }
             }
@@ -439,98 +396,13 @@ void lon_parse(const uint8_t *payload, uint8_t length)
         }
         uint16_t sel = destinType & 0x3FFF;
 
-        switch (sel)
+        pos += 2;
+        for (int idx = 0; idx < COUNT(nv_sel_items); idx++)
         {
-        case 0x101:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
+            if (nv_sel_items[idx].sel == sel)
             {
-                return;
+                handle_req_item(&nv_sel_items[idx].handle, &payload[pos], length - pos);
             }
-            lon_stat.error = (payload[pos] << 8) | payload[pos + 1];
-
-            if (lon_stat.error == 0xFFFF)
-            {
-                lon_stat.error = 0;
-            }
-            else
-            {
-                lon_stat.last_error_minutes = lon_stat.burning_minutes;
-            }
-
-            push_set_error(lon_stat.error);
-            break;
-        }
-
-        case 0x00:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_00 = (int16_t)((uint16_t)((payload[pos] << 8) | payload[pos + 1]));
-            break;
-        }
-        case 0x10:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_10 = (payload[pos] << 8) | payload[pos + 1];
-            break;
-        }
-        case 0x12:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_12 = (payload[pos] << 8) | payload[pos + 1];
-            break;
-        }
-        case 0x72:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_72 = (payload[pos] << 8) | payload[pos + 1];
-            break;
-        }
-        case 0x8A:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_8A = (payload[pos] << 8) | payload[pos + 1];
-            break;
-        }
-
-        case 0x110:
-        {
-            pos += 2;
-
-            if (pos + 1 >= length)
-            {
-                return;
-            }
-            lon_stat.var_sel_110 = (payload[pos] << 8) | payload[pos + 1];
-            break;
-        }
         }
 
         break;
@@ -602,34 +474,14 @@ void lon_initStat()
         lon_stat.error = 0;
         lon_stat.version = LONSTATE_VERSION;
 
-        lon_stat.var_nv_10_state = 0x7FFFFFFF;
-        lon_stat.var_nv_12 = 0x7FFFFFFF;
-        lon_stat.var_nv_13 = 0x7FFFFFFF;
-        lon_stat.var_nv_1B = 0x7FFFFFFF;
-        lon_stat.var_nv_1B_pmx = 0x7FFFFFFF;
-        lon_stat.var_nv_1C = 0x7FFFFFFF;
-        lon_stat.var_nv_1D = 0x7FFFFFFF;
-        lon_stat.var_nv_15_pmx = 0x7FFFFFFF;
-        lon_stat.var_nv_22_uml = 0x7FFFFFFF;
-        lon_stat.var_nv_23_uml = 0x7FFFFFFF;
-        lon_stat.var_nv_23_pmx = 0x7FFFFFFF;
-        lon_stat.var_nv_25_pmx = 0x7FFFFFFF;
-        lon_stat.var_nv_28 = 0x7FFFFFFF;
-        lon_stat.var_nv_2A = 0x7FFFFFFF;
-        lon_stat.var_nv_2B = 0x7FFFFFFF;
-        lon_stat.var_nv_2F = 0x7FFFFFFF;
-        lon_stat.var_nv_31 = 0x7FFFFFFF;
-        lon_stat.var_nv_32 = 0x7FFFFFFF;
-        lon_stat.var_sel_00 = 0x7FFFFFFF;
-        lon_stat.var_sel_10 = 0x7FFFFFFF;
-        lon_stat.var_sel_12 = 0x7FFFFFFF;
-        lon_stat.var_sel_72 = 0x7FFFFFFF;
-        lon_stat.var_sel_110 = 0x7FFFFFFF;
+        lon_stat.foerder_soll = 0;
     }
 
     lon_stat.stat_start_valid = 0;
     lon_statTime();
 
+    lon_stat.burning_minutes = 0;
+    lon_stat.last_error_minutes = 0x7FFFFFFF;
     lon_stat.rx_count = 0;
     lon_stat.crc_errors = 0;
     lon_stat.min_len_0 = 0xFFFFFFFF;
@@ -642,6 +494,14 @@ void lon_initStat()
 
 void lon_setup()
 {
+    for (int pos = 0; pos < COUNT(nv_req_items); pos++)
+    {
+        register_req_item(&nv_req_items[pos].handle);
+    }
+    for (int pos = 0; pos < COUNT(nv_sel_items); pos++)
+    {
+        register_req_item(&nv_sel_items[pos].handle);
+    }
     lon_initStat();
 
     pinMode(LON_RX, INPUT);
@@ -653,8 +513,6 @@ void lon_setup()
 
     lon_tx_setup();
     lon_rx_setup();
-
-    lon_udp_in.begin(udpPortIn);
 }
 
 bool lon_loop()
@@ -664,10 +522,13 @@ bool lon_loop()
     uint8_t type = 0;
     static int nextTimeSend = 1000;
     static int nextTimeSave = 1000;
-    const uint8_t nvVarsDest[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 10, 10, 10};
-    const uint8_t nvVars[] = {0x10, 0x12, 0x13, 0x15, 0x17, 0x18, 0x1B, 0x1C, 0x1D, 0x23, 0x25, 0x28, 0x2A, 0x2B, 0x2F, 0x31, 0x32, 0x72, 0x22, 0x23};
     static int nvVarPos = 0;
     bool hasWork = false;
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        lon_udp_begun = false;
+    }
 
     if (nextTimeSave <= curTime)
     {
@@ -685,23 +546,51 @@ bool lon_loop()
         nextTimeSave = curTime + 10 * 60 * 1000;
     }
 
+    if (manual_set_active)
+    {
+        if (curTime >= manual_set_next)
+        {
+            manual_set_next = curTime + 5000;
+            uint8_t manual_cmd[] = "\x00\x35\x01\xFF\x02\x54\x80\x12\x22\x60";
+            uint16_t temp = manual_set_temperature * 100;
+
+            manual_cmd[8] = temp >> 8;
+            manual_cmd[9] = temp & 0xFF;
+
+            lon_write(manual_cmd, 10);
+        }
+
+        if (curTime >= manual_set_end)
+        {
+            manual_set_active = false;
+            manual_set_next = 0;
+            manual_set_end = 0;
+        }
+    }
+
     if (nextTimeSend <= curTime || lon_save)
     {
         uint8_t nvVarCommand[] = "\x01\x19\x01\xFF\x01\x80\x54\x0D\x73\x00";
 
-        nvVarCommand[5] |= nvVarsDest[nvVarPos];
-        nvVarCommand[9] = nvVars[nvVarPos];
-        nvVarPos = (nvVarPos + 1) % sizeof(nvVars);
+        nvVarCommand[5] |= nv_req_items[nvVarPos].dest;
+        nvVarCommand[9] = nv_req_items[nvVarPos].nvar;
+        nvVarPos = (nvVarPos + 1) % COUNT(nv_req_items);
 
         /* request NV variables */
         lon_write(nvVarCommand, 10);
 
-        nextTimeSend = curTime + 5000;
+        nextTimeSend = curTime + 500;
         hasWork = true;
         lon_save = false;
     }
     else if (WiFi.status() == WL_CONNECTED)
     {
+        if (!lon_udp_begun)
+        {
+            lon_udp_in.begin(udpPortIn);
+            lon_udp_begun = true;
+        }
+
         uint32_t received = lon_udp_in.parsePacket();
 
         if (received > 0)
@@ -726,7 +615,7 @@ bool lon_loop()
     if (lastMinute != timeStruct.tm_min)
     {
         lastMinute = timeStruct.tm_min;
-        if (lon_stat.var_nv_10[0] == '5' || lon_stat.var_nv_10[0] == '8')
+        if (lon_stat.pmx_state == 5 || lon_stat.pmx_state == 8)
         {
             lon_stat.burning_minutes++;
         }
@@ -815,13 +704,16 @@ bool lon_loop()
 
             type = 2;
 
-            lon_udp_out.beginPacket(udpAddress, udpPort);
-            lon_udp_out.write((const uint8_t *)&type, 1);
-            lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].errorCode, 1);
-            lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].bitCount, 2);
-            lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].bitDuration, 2);
-            lon_udp_out.write(pkt_data, pkt_len);
-            lon_udp_out.endPacket();
+            if (WiFi.status() == WL_CONNECTED)
+            {
+                lon_udp_out.beginPacket(udpAddress, udpPort);
+                lon_udp_out.write((const uint8_t *)&type, 1);
+                lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].errorCode, 1);
+                lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].bitCount, 2);
+                lon_udp_out.write((const uint8_t *)&lon_rx_packets[pos].bitDuration, 2);
+                lon_udp_out.write(pkt_data, pkt_len);
+                lon_udp_out.endPacket();
+            }
 
             /*
                   Serial.printf("Received packet: (%d byte) ", pkt_len);

@@ -5,10 +5,53 @@
 #include <ArduinoOTA.h>
 #include <FS.h>
 #include <SPIFFS.h>
+#include <esp_task_wdt.h>
+#include <DallasTemperature.h>
+#include <LON.h>
 
-//#define LOCAL_BITDEBUG_MODE
+#define WDT_TIMEOUT 30
+
+#include "HA.h"
+
+// #define LOCAL_BITDEBUG_MODE
 
 extern bool ota_active;
+
+/* Heap watchdog: sample baseline 60s after boot, restart if heap drops below 50% */
+static uint32_t heap_baseline = 0;
+static bool     heap_baseline_set = false;
+
+void heap_watchdog_loop()
+{
+    uint32_t now = millis();
+    static uint32_t nextCheck = 0;
+
+    if (now < nextCheck)
+    {
+        return;
+    }
+    nextCheck = now + 10000;
+
+    uint32_t freeHeap = ESP.getFreeHeap();
+
+    if (!heap_baseline_set)
+    {
+        if (now >= 60000)
+        {
+            heap_baseline = freeHeap;
+            heap_baseline_set = true;
+            Serial.printf("[Heap] Baseline set: %u bytes\n", heap_baseline);
+        }
+        return;
+    }
+
+    if (freeHeap < heap_baseline / 2)
+    {
+        Serial.printf("[Heap] Low memory: %u bytes (baseline %u) - restarting\n", freeHeap, heap_baseline);
+        delay(200);
+        ESP.restart();
+    }
+}
 
 void setup()
 {
@@ -29,7 +72,6 @@ void setup()
     Serial.printf("\n");
     Serial.printf("[i] Starting\n");
 
-
     Serial.printf("[i]   Setup SPIFFS\n");
     if (!SPIFFS.begin(true))
     {
@@ -37,6 +79,11 @@ void setup()
     }
     cfg_read();
 
+    Serial.printf("[i]   Setup WDT\n");
+    esp_task_wdt_init(WDT_TIMEOUT, true);
+    esp_task_wdt_add(NULL);
+    
+    ha_setup();
     Serial.printf("[i]   Setup WiFi\n");
     wifi_setup();
     Serial.printf("[i]   Setup OTA\n");
@@ -45,15 +92,17 @@ void setup()
     time_setup();
     Serial.printf("[i]   Setup Webserver\n");
     www_setup();
-    Serial.printf("[i]   Setup MQTT\n");
-    mqtt_setup();
     Serial.printf("[i]   Setup LON bus\n");
     lon_setup();
+    Serial.printf("[i]   Setup MQTT\n");
+    mqtt_setup();
     Serial.printf("[i]   Setup Relays\n");
     relays_setup();
     Serial.printf("[i]   Setup Temperature sensors\n");
     tempsens_setup();
-    
+    Serial.printf("[i]   Setup OneWire\n");
+    onewire_setup();
+
     Serial.println("Setup done");
 
     relays_set(0, true);
@@ -86,6 +135,7 @@ void loop()
         hasWork |= www_loop();
         hasWork |= tempsens_loop();
         hasWork |= relays_loop();
+        heap_watchdog_loop();
     }
     hasWork |= ota_loop();
 
@@ -93,4 +143,5 @@ void loop()
     {
         delay(5);
     }
+    esp_task_wdt_reset();
 }
