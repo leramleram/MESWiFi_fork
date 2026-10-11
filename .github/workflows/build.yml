@@ -1,0 +1,40 @@
+name: Firmware bauen
+
+# Baut den aktuellen Stand und – zum Vergleich – den rekonstruierten, bisher aufgespielten Stand.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: aktuell
+            ref: ""
+          - name: aufgespielt-rekonstruiert
+            ref: 56874d8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ matrix.ref || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install platformio
+      - name: Alter Stand – Plattform/Bibliotheken wie 2022, Time.h für Linux
+        if: matrix.name == 'aufgespielt-rekonstruiert'
+        run: |
+          printf '#pragma once\n#include <time.h>\n' > include/Time.h
+          sed -i 's/^platform = espressif32$/platform = espressif32@5.1.0/' platformio.ini
+          sed -i 's|fastled/FastLED@^3.5.0|fastled/FastLED@3.5.0|' platformio.ini
+      - run: pio run -e MES-WiFi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.name }}
+          path: |
+            .pio/build/MES-WiFi/firmware.bin
+            .pio/build/MES-WiFi/firmware.elf
