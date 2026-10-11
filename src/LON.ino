@@ -48,24 +48,34 @@ typedef struct
     uint32_t igniteStatPos;
     uint8_t igniteStats[24 * 12];
     uint32_t ignites_24h;
-    int32_t var_sel_00;
-    uint32_t var_sel_10;
-    uint32_t var_sel_12;
-    uint32_t var_sel_72;
-    uint32_t var_sel_8A;
-    uint32_t var_sel_110;
-    uint32_t var_nv_12;
-    uint32_t var_nv_15_pmx;
-    uint32_t var_nv_1B;
-    uint32_t var_nv_1B_pmx;
-    uint32_t var_nv_23_pmx;
-    uint32_t var_nv_25_pmx;
-    uint32_t var_nv_2A;
-    uint32_t var_nv_2B;
-    uint32_t var_nv_2B_last;
-    uint32_t var_nv_2F;
-    uint32_t var_nv_31;
-    uint32_t var_nv_32;
+    int32_t var_sel_00;        /* 0x188 Selektor 0x000 Aussentemperatur */
+    uint32_t var_sel_10;       /* 0x18c Selektor 0x010 (Vorlauf soll HK, nicht mehr gesendet) */
+    uint32_t var_sel_12;       /* 0x190 Selektor 0x012 Vorlauf soll WW */
+    uint32_t var_unused_194;   /* 0x194 im aufgespielten Stand ungenutzt */
+    uint32_t var_sel_72;       /* 0x198 Selektor 0x072 Warmwasser soll */
+    uint32_t var_sel_8A;       /* 0x19c Selektor 0x08A */
+    uint32_t var_sel_110;      /* 0x1a0 Selektor 0x110 Kesseltemperatur */
+    uint32_t var_drehzahl;     /* 0x1a4 wird gesendet, aber nie beschrieben (Fehler im aufgespielten Stand) */
+    uint32_t var_nv_12;        /* 0x1a8 PMX 0x12 Drehzahl */
+    uint32_t var_nv_13;        /* 0x1ac PMX 0x13 Gesamtverbrauch /10 */
+    uint32_t var_nv_15_pmx;    /* 0x1b0 PMX 0x15 Foerdermenge soll */
+    uint32_t var_nv_17;        /* 0x1b4 PMX 0x17 Leistung aktuell (0,5 %) */
+    uint32_t var_nv_18;        /* 0x1b8 PMX 0x18 Leistung Durchschnitt (0,5 %) */
+    uint32_t var_nv_1B;        /* 0x1bc UML C1 0x1B */
+    uint32_t var_nv_1B_pmx;    /* 0x1c0 PMX 0x1B (als Betriebsstunden gesendet) */
+    uint32_t var_nv_1C;        /* 0x1c4 PMX 0x1C Anheizvorgaenge */
+    uint32_t var_nv_1D;        /* 0x1c8 PMX 0x1D Brennkammertemperatur (0,1 K) */
+    uint32_t var_nv_22_uml;    /* 0x1cc UML C1 0x22 Vorlauf soll HK */
+    uint32_t var_nv_23_uml;    /* 0x1d0 UML C1 0x23 Vorlauf ist HK */
+    uint32_t var_nv_23_pmx;    /* 0x1d4 PMX 0x23 Leistung soll */
+    uint32_t var_nv_25_pmx;    /* 0x1d8 PMX 0x25 Leistung */
+    uint32_t var_nv_28;        /* 0x1dc PMX 0x28 Abgastemperatur (0,1 K) */
+    uint32_t var_nv_2A;        /* 0x1e0 */
+    uint32_t var_nv_2B;        /* 0x1e4 */
+    uint32_t var_nv_2B_last;   /* 0x1e8 */
+    uint32_t var_nv_2F;        /* 0x1ec */
+    uint32_t var_nv_31;        /* 0x1f0 */
+    uint32_t var_nv_32;        /* 0x1f4 */
     char var_nv_10[8];
     uint32_t var_nv_10_state;
 
@@ -261,6 +271,15 @@ void lon_parse(const uint8_t *payload, uint8_t length)
                         }
                         break;
                     }
+                    /* PMX (60) NV ID 0x13 "Gesamtverbrauch" (x10) */
+                    case 0x13:
+                    {
+                        if (npdu_src == 60)
+                        {
+                            lon_stat.var_nv_13 = (payload[pos] << 8) | payload[pos + 1];
+                        }
+                        break;
+                    }
                     /* PMX (60) NV ID 0x15 is "Fördermenge Soll" */
                     case 0x15:
                     {
@@ -270,8 +289,25 @@ void lon_parse(const uint8_t *payload, uint8_t length)
                         }
                         break;
                     }
-                    /* UML C1 (10) NV ID 0x1B is "Boilertemperatur" */
-                    /* PMX (60) NV ID 0x1B is  "Fördermenge Ist" */
+                    /* PMX (60) NV ID 0x17 "Leistung aktuell" (0,5 %) */
+                    case 0x17:
+                    {
+                        if (npdu_src == 60)
+                        {
+                            lon_stat.var_nv_17 = payload[pos];
+                        }
+                        break;
+                    }
+                    /* PMX (60) NV ID 0x18 "Leistung Durchschnitt" (0,5 %) */
+                    case 0x18:
+                    {
+                        if (npdu_src == 60)
+                        {
+                            lon_stat.var_nv_18 = payload[pos];
+                        }
+                        break;
+                    }
+                    /* UML C1 (10) NV ID 0x1B / PMX (60) NV ID 0x1B (als Betriebsstunden gesendet) */
                     case 0x1B:
                     {
                         if (npdu_src == 10)
@@ -284,9 +320,40 @@ void lon_parse(const uint8_t *payload, uint8_t length)
                         }
                         break;
                     }
-                    /* PMX (60) NV ID 0x23 is "Leistung Soll" */
+                    /* PMX (60) NV ID 0x1C "Anheizvorgänge" */
+                    case 0x1C:
+                    {
+                        if (npdu_src == 60)
+                        {
+                            lon_stat.var_nv_1C = (payload[pos] << 8) | payload[pos + 1];
+                        }
+                        break;
+                    }
+                    /* PMX (60) NV ID 0x1D "Brennkammertemperatur" (0,1 K) */
+                    case 0x1D:
+                    {
+                        if (npdu_src == 60)
+                        {
+                            lon_stat.var_nv_1D = (payload[pos] << 8) | payload[pos + 1];
+                        }
+                        break;
+                    }
+                    /* UML C1 (10) NV ID 0x22 "Vorlauf soll HK" */
+                    case 0x22:
+                    {
+                        if (npdu_src == 10)
+                        {
+                            lon_stat.var_nv_22_uml = (payload[pos] << 8) | payload[pos + 1];
+                        }
+                        break;
+                    }
+                    /* UML C1 (10) NV ID 0x23 "Vorlauf ist HK" / PMX (60) NV ID 0x23 "Leistung Soll" */
                     case 0x23:
                     {
+                        if (npdu_src == 10)
+                        {
+                            lon_stat.var_nv_23_uml = (payload[pos] << 8) | payload[pos + 1];
+                        }
                         if (npdu_src == 60)
                         {
                             lon_stat.var_nv_23_pmx = payload[pos];
@@ -302,12 +369,12 @@ void lon_parse(const uint8_t *payload, uint8_t length)
                         }
                         break;
                     }
-                    /* PMX (60) NV ID 0x2A is "Betriebsstunden" */
-                    case 0x2A:
+                    /* PMX (60) NV ID 0x28 "Abgastemperatur" (0,1 K) */
+                    case 0x28:
                     {
                         if (npdu_src == 60)
                         {
-                            lon_stat.var_nv_2A = (payload[pos] << 8) | payload[pos + 1];
+                            lon_stat.var_nv_28 = (payload[pos] << 8) | payload[pos + 1];
                         }
                         break;
                     }
@@ -537,11 +604,17 @@ void lon_initStat()
 
         lon_stat.var_nv_10_state = 0x7FFFFFFF;
         lon_stat.var_nv_12 = 0x7FFFFFFF;
+        lon_stat.var_nv_13 = 0x7FFFFFFF;
         lon_stat.var_nv_1B = 0x7FFFFFFF;
-        lon_stat.var_nv_15_pmx = 0x7FFFFFFF;
         lon_stat.var_nv_1B_pmx = 0x7FFFFFFF;
+        lon_stat.var_nv_1C = 0x7FFFFFFF;
+        lon_stat.var_nv_1D = 0x7FFFFFFF;
+        lon_stat.var_nv_15_pmx = 0x7FFFFFFF;
+        lon_stat.var_nv_22_uml = 0x7FFFFFFF;
+        lon_stat.var_nv_23_uml = 0x7FFFFFFF;
         lon_stat.var_nv_23_pmx = 0x7FFFFFFF;
         lon_stat.var_nv_25_pmx = 0x7FFFFFFF;
+        lon_stat.var_nv_28 = 0x7FFFFFFF;
         lon_stat.var_nv_2A = 0x7FFFFFFF;
         lon_stat.var_nv_2B = 0x7FFFFFFF;
         lon_stat.var_nv_2F = 0x7FFFFFFF;
@@ -591,8 +664,8 @@ bool lon_loop()
     uint8_t type = 0;
     static int nextTimeSend = 1000;
     static int nextTimeSave = 1000;
-    const uint8_t nvVarsDest[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 10};
-    const uint8_t nvVars[] = {0x10, 0x12, 0x15, 0x1B, 0x23, 0x25, 0x2A, 0x2B, 0x2F, 0x31, 0x32, 0x72, 0x1B};
+    const uint8_t nvVarsDest[] = {60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 10, 10, 10};
+    const uint8_t nvVars[] = {0x10, 0x12, 0x13, 0x15, 0x17, 0x18, 0x1B, 0x1C, 0x1D, 0x23, 0x25, 0x28, 0x2A, 0x2B, 0x2F, 0x31, 0x32, 0x72, 0x22, 0x23};
     static int nvVarPos = 0;
     bool hasWork = false;
 

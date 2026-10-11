@@ -194,32 +194,29 @@ bool mqtt_loop()
             mqtt_publish_int("feeds/integer/%s/rx-crc", lon_stat.crc_errors);
 
             mqtt_publish_int("feeds/integer/%s/fehlercode", lon_stat.error);
-            mqtt_publish_int("feeds/integer/%s/drehzahl", lon_stat.var_nv_12);
-            mqtt_publish_int("feeds/integer/%s/betriebsstunden", lon_stat.var_nv_2A);
-            mqtt_publish_int("feeds/integer/%s/anheiz-count", lon_stat.var_nv_2B);
+            /* Fehler im aufgespielten Stand: var_drehzahl wird nie beschrieben, NV 0x12 landet in var_nv_12 */
+            mqtt_publish_int("feeds/integer/%s/drehzahl", lon_stat.var_drehzahl);
+            mqtt_publish_int("feeds/float/%s/leistungaktuell", lon_stat.var_nv_17 * 0.5f);
+            mqtt_publish_int("feeds/float/%s/leistungdurchschnitt", lon_stat.var_nv_18 * 0.5f);
+            mqtt_publish_int("feeds/integer/%s/betriebsstunden", lon_stat.var_nv_1B_pmx);
+            mqtt_publish_int("feeds/integer/%s/anheiz-count", lon_stat.var_nv_1C);
             mqtt_publish_int("feeds/integer/%s/zustand", lon_stat.var_nv_10_state);
 
             mqtt_publish_string("feeds/string/%s/display", (const char *)lon_stat.var_nv_10);
-            mqtt_publish_float("feeds/float/%s/temp-pcb", tempsens_value);
 
             mqtt_publish_int("feeds/integer/%s/foerder-soll", lon_stat.var_nv_15_pmx);
-            mqtt_publish_int("feeds/integer/%s/foerder-berech", lon_stat.var_nv_1B_pmx);
+            if (lon_stat.var_nv_1B != 0x7FFFFFFF)
+            {
+                mqtt_publish_int("feeds/integer/%s/foerder-berech", lon_stat.var_nv_1B);
+            }
 
-            if (lon_stat.var_nv_23_pmx != 0x7FFFFFFF)
+            if (lon_stat.var_nv_1D != 0x7FFFFFFF)
             {
-                mqtt_publish_float("feeds/float/%s/leistung-soll", lon_stat.var_nv_23_pmx / 2.0f);
+                mqtt_publish_float("feeds/float/%s/temp-brennkammer", (lon_stat.var_nv_1D / 10.0f) - 273.15f);
             }
-            if (lon_stat.var_nv_25_pmx != 0x7FFFFFFF)
+            if (lon_stat.var_nv_28 != 0x7FFFFFFF)
             {
-                mqtt_publish_float("feeds/float/%s/leistung", lon_stat.var_nv_25_pmx / 2.0f);
-            }
-            if (lon_stat.var_nv_2F != 0x7FFFFFFF)
-            {
-                mqtt_publish_float("feeds/float/%s/temp-kammer", (lon_stat.var_nv_2F / 10.0f) - 273.15f);
-            }
-            if (lon_stat.var_nv_31 != 0x7FFFFFFF)
-            {
-                mqtt_publish_float("feeds/float/%s/temp-abgas", (lon_stat.var_nv_31 / 10.0f) - 273.15f);
+                mqtt_publish_float("feeds/float/%s/temp-abgas", (lon_stat.var_nv_28 / 10.0f) - 273.15f);
             }
             if (lon_stat.var_nv_32 != 0x7FFFFFFF)
             {
@@ -233,13 +230,21 @@ bool mqtt_loop()
             {
                 mqtt_publish_float("feeds/float/%s/temp-aussen", lon_stat.var_sel_00 / 100.0f);
             }
-            if (lon_stat.var_sel_10 != 0x7FFFFFFF)
+            if (lon_stat.var_nv_22_uml != 0x7FFFFFFF)
             {
-                mqtt_publish_float("feeds/float/%s/temp-vorlauf-soll-hk", lon_stat.var_sel_10 / 100.0f);
+                mqtt_publish_float("feeds/float/%s/temp-vorlauf-soll-hk", lon_stat.var_nv_22_uml / 100.0f);
+            }
+            if (lon_stat.var_nv_23_uml != 0x7FFFFFFF)
+            {
+                mqtt_publish_float("feeds/float/%s/temp-vorlauf-ist-hk", lon_stat.var_nv_23_uml / 100.0f);
             }
             if (lon_stat.var_sel_12 != 0x7FFFFFFF)
             {
                 mqtt_publish_float("feeds/float/%s/temp-vorlauf-soll-ww", lon_stat.var_sel_12 / 100.0f);
+            }
+            if (lon_stat.var_nv_13 != 0x7FFFFFFF)
+            {
+                mqtt_publish_float("feeds/float/%s/gesamtverbrauch", (float)(lon_stat.var_nv_13 * 10));
             }
             if (lon_stat.var_sel_72 != 0x7FFFFFFF)
             {
