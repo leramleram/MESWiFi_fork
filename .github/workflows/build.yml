@@ -15,7 +15,7 @@ jobs:
           - name: aktuell
             ref: ""
           - name: aufgespielt-rekonstruiert
-            ref: 56874d8
+            ref: 56874d8850ba2f2f39d3813ef43a6a18067c8741
     steps:
       - uses: actions/checkout@v4
         with:
