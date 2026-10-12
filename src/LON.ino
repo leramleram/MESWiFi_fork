@@ -213,7 +213,6 @@ static void register_req_item(const nv_handle_item_t *item)
  * (siehe Commit "Rekonstruktion des aufgespielten Stands"). Abweichend von Upstream:
  *  - 60/0x1B = Betriebsstunden, 60/0x1C = Anheizzähler, 60/0x1D = Brennkammer, 60/0x28 = Abgas
  *  - 60/0x13 Gesamtverbrauch (x10 kg), 60/0x17/0x18 Leistung aktuell/Durchschnitt
- *  - UML C1 (10) 0x22/0x23 = Vorlauf soll/ist (Topics wie bisher "...-hk")
  *  - die Upstream-Belegung von 0x2A/0x2B/0x2F/0x31 wird unter neutralen Namen weiter abgefragt
  */
 static const nv_sel_item_t nv_sel_items[] = {
@@ -244,21 +243,10 @@ static const nv_req_item_t nv_req_items[] = {
     {60, 0x2F, {SNVT_temp, NULL, "pmx-2f", "PMX 0x2F (Upstream: Temperatur Brennkammer)"}},
     {60, 0x30, {SNVT_temp_p, NULL, "temp-schaltfeld", "Temperatur Schaltfeld"}},
     {60, 0x31, {SNVT_temp, NULL, "pmx-31", "PMX 0x31 (Upstream: Temperatur Abgas)"}},
-    {60, 0x32, {SNVT_temp_p, NULL, "temp-kessel-soll", "Temperatur Kessel soll"}},
+    {60, 0x32, {SNVT_temp_p, NULL, "temp-kessel-soll", "Temperatur Kessel soll"}}};
 
-    /* UML 0x10 */
-    {10, 0x1B, {SNVT_temp_p, NULL, "temp-speicher-uml", "Temperatur Speicher (UML)"}},
-    {10, 0x1C, {SNVT_temp_p, NULL, "temp-speicher-soll", "Temperatur Speicher soll"}},
-    {10, 0x1D, {SNVT_lev_cont, NULL, "ww-pumpe", "Warmwasser Pumpe"}},
-    {10, 0x1E, {SNVT_lev_cont, NULL, "ww-ladeventil", "Warmwasser Ladeventil"}},
-    {10, 0x22, {SNVT_temp_p, NULL, "temp-vorlauf-soll-hk", "Temperatur Vorlauf soll (UML 10)"}},
-    {10, 0x23, {SNVT_temp_p, NULL, "temp-vorlauf-ist-hk", "Temperatur Vorlauf ist (UML 10)"}},
-    {10, 0x24, {SNVT_lev_cont, NULL, "fbh-pumpe", "FBH Pumpe"}},
-    {10, 0x25, {SNVT_lev_percent, NULL, "fbh-mischer", "FBH Mischer"}},
-
-    /* UML 0x11 */
-    {11, 0x24, {SNVT_lev_cont, NULL, "hk-pumpe", "Heizkörper Pumpe"}},
-    {11, 0x25, {SNVT_lev_percent, NULL, "hk-mischer", "Heizkörper Mischer"}}};
+/* UML-Module (C1 = 10, 0x11) sind seit dem Umbau der Heizung nicht mehr vorhanden – keine Abfragen mehr an Knoten 10/11
+   (vorher ein Drittel der Abfragen ohne Antwort). */
 
 uint16_t crc16_table[] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5,
