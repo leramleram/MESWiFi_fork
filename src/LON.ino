@@ -6,7 +6,8 @@
 #include <HA.h>
 #include <Macros.h>
 
-const char *udpAddress = "192.168.1.255";
+/* Bus-Spiegel an has (Mitschnitt mes-bus-log); Upstream: 192.168.1.255, bei uns nicht erreichbar */
+const char *udpAddress = "10.0.0.1";
 const int udpPort = 3333;
 const int udpPortIn = 3334;
 
