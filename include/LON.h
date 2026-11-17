@@ -46,7 +46,9 @@ typedef enum
     SNVT_lev_percent,
     /* eigene Typen (leramleram): Rohwert 16 bit ohne Umrechnung, Gesamtverbrauch in 10 kg */
     SNVT_raw16,
-    SNVT_mass_10kilo
+    SNVT_mass_10kilo,
+    /* 4 Byte roh als Hex-Text (feeds/string/...), z. B. Statusbitfelder NV 0x2A/0x30 */
+    SNVT_hex32
 } snvt_type_t;
 
 typedef struct

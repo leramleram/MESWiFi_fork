@@ -117,6 +117,22 @@ static void handle_req_item(const nv_handle_item_t *item, const uint8_t *payload
         is_float = true;
         break;
 
+    case SNVT_hex32:
+        /* Statusbitfeld: 4 Byte als Hex-Text, Ziel bekommt die unteren 16 Bit (z. B. Kesselphase 0x0420) */
+        if (length < 4)
+        {
+            return;
+        }
+        sprintf(message, "%02x%02x%02x%02x", payload[0], payload[1], payload[2], payload[3]);
+        strcpy(mqtt_topic, "feeds/string/%s/");
+        strcat(mqtt_topic, item->name);
+        mqtt_publish_string(mqtt_topic, message);
+        if (item->destination)
+        {
+            *item->destination = ((uint16_t)payload[2] << 8) | payload[3];
+        }
+        return;
+
     default:
         return;
     }
@@ -145,6 +161,7 @@ static void register_req_item(const nv_handle_item_t *item)
     char mqtt_topic[64];
     bool is_float = false;
 
+    bool is_string = false;
     t_ha_entity entity;
 
     memset(&entity, 0x00, sizeof(entity));
@@ -182,6 +199,9 @@ static void register_req_item(const nv_handle_item_t *item)
         entity.unit_of_meas = "kg";
         is_float = true;
         break;
+    case SNVT_hex32:
+        is_string = true;
+        break;
 
     default:
         return;
@@ -191,7 +211,12 @@ static void register_req_item(const nv_handle_item_t *item)
     entity.name = item->description;
     entity.type = ha_sensor;
 
-    if (is_float)
+    if (is_string)
+    {
+        strcpy(mqtt_topic, "feeds/string/%s/");
+        strcat(mqtt_topic, item->name);
+    }
+    else if (is_float)
     {
         strcpy(mqtt_topic, "feeds/float/%s/");
         strcat(mqtt_topic, item->name);
@@ -215,6 +240,7 @@ static void register_req_item(const nv_handle_item_t *item)
  *  - 60/0x1B = Betriebsstunden, 60/0x1C = Anheizzähler, 60/0x1D = Brennkammer, 60/0x28 = Abgas
  *  - 60/0x13 Gesamtverbrauch (x10 kg), 60/0x17/0x18 Leistung aktuell/Durchschnitt
  *  - die Upstream-Belegung von 0x2A/0x2B/0x2F/0x31 wird unter neutralen Namen weiter abgefragt
+ *  - 60/0x2A und 60/0x30 sind 4-Byte-Statusfelder → Hex-Text (0x30 = Kesselphase), 60/0x2B = Vorratsbehälter (Schätzwert)
  */
 static const nv_sel_item_t nv_sel_items[] = {
     {0x000, {SNVT_temp_p, NULL, "temp-aussen", "Temperatur Aussen"}},
@@ -239,10 +265,12 @@ static const nv_req_item_t nv_req_items[] = {
     {60, 0x23, {SNVT_lev_cont, NULL, "leistung-soll", "Leistung soll"}},
     {60, 0x25, {SNVT_lev_cont, NULL, "leistung", "Leistung ist"}},
     {60, 0x28, {SNVT_temp, NULL, "temp-abgas", "Temperatur Abgas"}},
-    {60, 0x2A, {SNVT_raw16, NULL, "pmx-2a", "PMX 0x2A (Upstream: Betriebsstunden)"}},
+    {60, 0x2A, {SNVT_hex32, NULL, "pmx-2a", "PMX 0x2A Status (hex)"}},
     {60, 0x2B, {SNVT_raw16, NULL, "pmx-2b", "PMX 0x2B (Upstream: Anheizzähler)"}},
     {60, 0x2F, {SNVT_temp, NULL, "pmx-2f", "PMX 0x2F (Upstream: Temperatur Brennkammer)"}},
-    {60, 0x30, {SNVT_temp_p, NULL, "temp-schaltfeld", "Temperatur Schaltfeld"}},
+    /* 0x30 ist keine Temperatur, sondern Ablaufphase (Bus-Mitschnitt 16.11.2026): …0210 Bereitschaft, …0320 Vorspülen,
+       …0340 Zündung, …0350 Flamme, …0420 Leistungsbrand, …0510 Ausbrand, 1010 0000 Saugbefüllung */
+    {60, 0x30, {SNVT_hex32, NULL, "kessel-phase", "Kesselphase (hex)"}},
     {60, 0x31, {SNVT_temp, NULL, "pmx-31", "PMX 0x31 (Upstream: Temperatur Abgas)"}},
     {60, 0x32, {SNVT_temp_p, NULL, "temp-kessel-soll", "Temperatur Kessel soll"}}};
 
